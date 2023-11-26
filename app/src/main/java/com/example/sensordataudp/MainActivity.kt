@@ -30,6 +30,12 @@ import java.net.NetworkInterface
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.text.isDigitsOnly
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.DatagramPacket
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity(), SensorEventListener {
     private lateinit var sensorManager: SensorManager
@@ -77,12 +83,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-
+        var data =  mutableMapOf<String,Mapof<String,Float>>()
         if (event?.sensor?.type == Sensor.TYPE_GYROSCOPE) {
             val angularSpeedX = event.values[0]
             val angularSpeedY = event.values[1]
             val angularSpeedZ = event.values[2]
             if (!statusChecked) SensorApp.updateGyroscopeSupport(true)
+            data["gyroscope"]["x"] = angularSpeedX
+            data["gyroscope"]["y"] = angularSpeedY
+            data["gyroscope"]["z"] = angularSpeedZ
             SensorApp.updateGyroscopeData(mapOf( "x" to angularSpeedX, "y" to angularSpeedY,"z" to angularSpeedZ))
         }
         if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER){
@@ -90,13 +99,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val accelY = event.values[1]
             val accelZ = event.values[2]
             if(!statusChecked) SensorApp.updateAccelerometerSupport(true)
+            data["accelerometer"]["x"] = accelX
+            data["accelerometer"]["y"] = accelY
+            data["accelerometer"]["z"] = accelZ
             SensorApp.updateAccelerometerData(mapOf( "x" to accelX, "y" to accelY,"z" to accelZ))
         }
         if (event?.sensor?.type == Sensor.TYPE_AMBIENT_TEMPERATURE){
             val temp = event.values[0]
+            data["temperature"]["temp"] = temp
             SensorApp.updateAmbientTemperatureSupport(true)
             SensorApp.updateAmbientTemperatureData(mapOf("temperature" to temp))
         }
+        //SensorApp.updateSensors(data)
     }
 }
 
@@ -161,7 +175,34 @@ fun SensorCard(title:String,about:String,supported:Boolean,sensorData:Map<String
         }
     }
 }
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+
+fun sendSensorData(ipAddress:String,port:Int,sensorType: String, data: Map<String, Float>) {
+    GlobalScope.launch(Dispatchers.IO) {
+        val udpSocket = DatagramSocket()
+
+        // Replace "your_server_ip" and "your_udp_port" with the actual server IP and UDP port
+        val serverAddress = InetAddress.getByName(ipAddress)
+
+        val message = buildString {
+            append(sensorType)
+            data.forEach { (key, value) ->
+                append("\n$key: $value")
+            }
+        }
+
+        val sendData = message.toByteArray()
+        val packet = DatagramPacket(sendData, sendData.size, serverAddress, port)
+        udpSocket.send(packet)
+
+        udpSocket.close()
+    }
+}
+
+
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class,
+    ExperimentalLayoutApi::class
+)
 @Composable
 @Preview(showBackground=true)
 fun SensorApp() {
@@ -186,7 +227,7 @@ fun SensorApp() {
             }
         }
     }
-    var selectedAddress by remember { mutableStateOf("") }
+    var selectedAddress by remember { mutableStateOf("/0.0.0.0") }
     val onItemClick = { address: String -> selectedAddress = address}
     var serverStatus by remember { mutableStateOf(false) }
     var portNumber by remember { mutableStateOf("26076") }
@@ -202,15 +243,22 @@ fun SensorApp() {
         LazyColumn(modifier = Modifier.padding(vertical = 16.dp)) {
             stickyHeader{
                 Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "Sensor Data UDP", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight(1000))
+                    FlowRow(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "UDP SERVER",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(20,33,61),
+                            fontWeight = FontWeight(900)
+                        )
                         OutlinedTextField(
                             value = portNumber,
                             placeholder = { Text("26076")},
                             onValueChange = { if (it.isDigitsOnly()) portNumber = it },
                             label = { Text("Port") },
                             modifier = Modifier
-                                .padding( 16.dp),
-                                //.width(128.dp),
+                                .padding(16.dp)
+                                .width(128.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
                         Column {
@@ -252,6 +300,9 @@ fun SensorApp() {
         SensorApp.updateGyroscopeData = {
                 data:Map<String, Float> -> run{
                     gyroscopeData = data
+                    if(serverStatus){
+                        sendSensorData(selectedAddress,portNumber.toInt(), sensorType = "Gyroscope",data)
+                    }
                 }
         }
         SensorApp.updateGyroscopeSupport = {
